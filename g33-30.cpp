@@ -19,14 +19,17 @@ int N = 5; //NUmber of users
 int M = 6; //NUmber of secondary nodes
 
 struct User{
+	//user details
 	int id;
 	string pw;
 	string tid;
 
+	//construct the smart card
 	string a;
 	string b;
 	string c;
 
+	//amount
 	string r;
 };
 
@@ -91,15 +94,17 @@ string randomNumber(int bits, int flag)
 	return temp;
 }
 
+//generating SHA3 hash
 string generateHash(string source)
 {
       SHA3_256 sha256;
       string hash = "";
       StringSource(source, true, new HashFilter(sha256, new HexEncoder(new StringSink(hash))));
-      //cout << "hash = " << hash << "'\n";
+      cout << "hash = " << hash << "'\n";
       return hash;
 }
 
+//used in the AES encryption/decryption
 SecByteBlock iv(AES::BLOCKSIZE);
 
 string aesEncryption(string key, string plaintext)
@@ -112,7 +117,8 @@ string aesEncryption(string key, string plaintext)
 	string output;
 	CTR_Mode<AES>::Encryption encrypt((const byte*)sbb,AES::DEFAULT_KEYLENGTH,(const byte*)iv);
 	StringSource(plaintext, true, new StreamTransformationFilter(encrypt, new StringSink(output)));
-	//cout << "Encrypted: " << output << endl;
+	//cout << output << endl;
+	cout << "Encrypted: " << output << endl;
 
 	return output;
 }
@@ -126,7 +132,8 @@ string aesDecryption(string key, string ciphertext)
 	string res;
 	CTR_Mode<AES>::Decryption decrypt((const byte*)sbb,AES::DEFAULT_KEYLENGTH,(const byte*)iv);
 	StringSource(ciphertext, true, new StreamTransformationFilter(decrypt, new StringSink(res)));
-	//cout << "Decrypted: " << res << endl;
+	//cout << res << endl;
+	cout << "Decrypted: " << res << endl;
 
 	return res;
 }
@@ -154,10 +161,10 @@ string exor(string a, string b)
  int main()
  {
  	string temp; //user to store partial inputs when xoring or hashing, not specific
- 	string input;
+ 	string input; //input variable for hash functions	
 
  	User u[N];
- 	int flag = 0;
+
  	//USER REGISTRATION PHASE
  	for(int i=0; i<N; i++)
  	{
@@ -187,19 +194,23 @@ string exor(string a, string b)
 	string r = randomNumber(256, 1); //random number generated
 
 	string tidstr = u[uid].tid; //tid in string format
-	string uidpass = u[uid].pw;
+	string uidpass = u[uid].pw; //password in string format
 
 	//Computing a
+	//A i = h ( h ( ID i ) || h ( PW i , r ))
 	input = generateHash(uidstr) + generateHash(uidpass + r);
 	gwn.au = generateHash(input);
 
 	//computing b
+	//B i = h ( TID i , X k ) ⊕ h ( PW i , r )
 	gwn.b = exor(generateHash(tidstr + gwn.x), generateHash(uidpass + r));
 
 	//computing c
+	//C i = h ( ID i , X k ) ⊕ h ( h ( ID i ) ⊕ h ( PW i , r ))
 	temp = exor(generateHash(uidstr), generateHash(uidpass + r));
 	gwn.c = exor(generateHash(uidstr + gwn.x), generateHash(temp));
 
+	//sends a, b, c back to the user via smart card
 	u[uid].a = gwn.au;
 	u[uid].b = gwn.b;
 	u[uid].c = gwn.c;
@@ -222,7 +233,8 @@ string exor(string a, string b)
 	sidstr.resize(64, '0');
 	reverse(sidstr.begin(), sidstr.end());
 
-	//gen erating gwn.as
+	//generating gwn.as
+	//A j = h ( ID SN j ⊕ S ran )
 	string sran = randomNumber(256, 1);
 	gwn.as = generateHash(sidstr + sran);
 	gwn.sid = sid;
@@ -232,39 +244,40 @@ string exor(string a, string b)
 
 	//LOGIN PHASE BEGIN
 	//step-1
-	string a1 = generateHash(generateHash(uidstr) + generateHash(u[uid].pw + r));
+	string a1 = generateHash(generateHash(uidstr) + generateHash(u[uid].pw + r)); //a1 = h ( h ( ID i ) , h ( PW i , r ))
 
 	if(a1 == gwn.au)
 	{
 		//step-2
-		string h1 = exor(gwn.b, generateHash(u[uid].pw + r));
+		string h1 = exor(gwn.b, generateHash(u[uid].pw + r)); //h1 = B i ⊕ h ( PW i , r )
 
-		string temp = exor(generateHash(uidstr), generateHash(u[uid].pw + r));
-		string h2 = exor(gwn.c, generateHash(temp));
+		string temp = exor(generateHash(uidstr), generateHash(u[uid].pw + r)); 
+		string h2 = exor(gwn.c, generateHash(temp)); //h2 = C i ⊕ h ( h ( ID i ) ⊕ h ( PW i , r ))
 
-		string t1 = randomNumber(256, 1);
+		string t1 = randomNumber(256, 1); //timestamp
 
-		string key = generateHash(u[uid].tid + gwn.x);
-		string plaintext = uidstr + t1 + u[uid].tid + u[uid].r;
-		string d = aesEncryption(key, plaintext);
+		string key = generateHash(u[uid].tid + gwn.x); //key for aes, key = h ( TID i , X k )
+		string plaintext = uidstr + t1 + u[uid].tid + u[uid].r; //plaintext = { ID i || T 1 || TID i || r i }
+		string d = aesEncryption(key, plaintext); 
 
-		string e = generateHash(generateHash(uidstr + gwn.x) + u[uid].r + t1);
+		string e = generateHash(generateHash(uidstr + gwn.x) + u[uid].r + t1); //e = h(h ( ID i || X k ) || r i || T 1 )
 
 
 		//step-3
 		d = aesDecryption(key, d);
 
-		string t2 = randomNumber(256, 1);
+		string t2 = randomNumber(256, 1); //timestamp 2
 
+		//verify h ( h ( ID i || X k ) || r i || T 1 ) = E i
 		if(e == generateHash(generateHash(uidstr + gwn.x) + u[uid].r + t1))
 		{
-			string rk = randomNumber(256, 1);
-			string key = generateHash( exor(sidstr, sran) );
-			plaintext = exor(rk, u[uid].r) + u[uid].tid + t1 + t2;
+			string rk = randomNumber(256, 1); //random number
+			string key = generateHash( exor(sidstr, sran) ); //h ( ID SN ⊕ S ran )
+			plaintext = exor(rk, u[uid].r) + u[uid].tid + t1 + t2; //(r k ⊕ r i || TID i || T 1 || T 2)
 
 			string f = aesEncryption(key, plaintext);
 
-			string gwnidstr = randomNumber(256, 0);
+			string gwnidstr = randomNumber(256, 0); //storing id of the gwn in string form
 		 	int gwnid = (int) (gwnidstr[4] - '0');
 			gwnid = (gwnid) % 5;
 			gwnidstr = to_string(gwnid);
@@ -272,46 +285,51 @@ string exor(string a, string b)
 			gwnidstr.resize(64, '0');
 			reverse(gwnidstr.begin(), gwnidstr.end());
 
-			string g = generateHash(u[uid].tid + sidstr + generateHash( exor(sidstr , sran)) + gwnidstr + t2 + exor(rk, u[uid].r));
+			//G i = h ( TID i || ID SN j || h ( ID SN j ⊕ S ran ) || ID GW N || T 2 || r k ⊕ r i )
+			string g = generateHash(u[uid].tid + sidstr + generateHash( exor(sidstr , sran)) + gwnidstr + t2 + exor(rk, u[uid].r)); 
 
 			//step-4
 			key = generateHash(sidstr + sran);
 			f = aesDecryption(key, f);
 
+			//g1 = h ( ID SN j || TID i || ID GW N || h ( ID SN j ⊕ S ran ) || T 2 || r k ⊕ r i )
 			string g1 = generateHash((u[uid].tid + sidstr + generateHash( exor(sidstr , sran)) + gwnidstr + t2 + exor(rk, u[uid].r)));
 
 			if(g1 == g)
 			{
-				string rj = randomNumber(256, 1);
-				string t3 = randomNumber(256, 1);
+				string rj = randomNumber(256, 1); //random number
+				string t3 = randomNumber(256, 1); //timestamp 3
 
-				string sk = generateHash(exor(rk, exor(u[uid].r, rj)) + t1 + t2 + t3);
+				string sk = generateHash(exor(rk, exor(u[uid].r, rj)) + t1 + t2 + t3); //SK = h ( r k ⊕ r i ⊕ r j || T 1 || T 2 || T 3 )
 
-				plaintext = rj + t3 + exor(rk, u[uid].r);
-				string h = aesEncryption(key, plaintext);
+				plaintext = rj + t3 + exor(rk, u[uid].r); //plaintext = ( r j || T 3 || r k ⊕ r i )
+				string h = aesEncryption(key, plaintext); //same key
 
-				string i = generateHash(sidstr + u[uid].tid + t3 + sk);
+				string i = generateHash(sidstr + u[uid].tid + t3 + sk); //i = h ( ID SN j || TID i || T 3 || SK )
 
 				//step-5
 
-				f = aesDecryption(key, h);
+				f = aesDecryption(key, h); //decryption
 
-				sk = generateHash(exor(rk, exor(u[uid].r, rj)) + t1 + t2 + t3);
+				sk = generateHash(exor(rk, exor(u[uid].r, rj)) + t1 + t2 + t3); //SK = h ( r k ⊕ r i ⊕ r j , T 1 , T 2 , T 3 )
 
+				//checks if h ( ID SN j , TID i , T 3 , SK ) = I 
 				if(generateHash(sidstr + u[uid].tid + t3 + sk) == i)
 				{
-					string t4 = randomNumber(256, 1);
-					plaintext = exor(rk, rj) + u[uid].r + sidstr + gwnidstr + t2 + t3 + t4;
-					key = uidstr + gwn.x;
-					string k = generateHash(sk + t4 + generateHash(u[uid].tid + gwn.x));
+					string t4 = randomNumber(256, 1); //timestamp 4
 
-					string j = aesEncryption(key, plaintext);
+					//plaintext = ( r k ⊕ r j || r i || ID SN j || ID GW N || T 2 || T 3 || T 4 )
+					plaintext = exor(rk, rj) + u[uid].r + sidstr + gwnidstr + t2 + t3 + t4; 
+					key = uidstr + gwn.x; //h ( ID i ,X k )
+					string j = aesEncryption(key, plaintext); 
+
+					string k = generateHash(sk + t4 + generateHash(u[uid].tid + gwn.x)); //K i = h ( SK, T 4 , h ( TID i , X k ))
 
 					//step-6
 
-					f = aesDecryption(key, j);
+					f = aesDecryption(key, j); //decrypts ( r k ⊕ r j || r i || ID SN j || ID GW N || T 2 || T 3 || T 4 ) using h ( ID i ,X k )
 
-					sk = generateHash(exor(rk, exor(u[uid].r, rj)) + t1 + t2 + t3);
+					sk = generateHash(exor(rk, exor(u[uid].r, rj)) + t1 + t2 + t3); //sk = h ( r k ⊕ r i ⊕ r j || T 1 || T 2 || T 3 )
 
 					if(generateHash(sk + t4 + generateHash(u[uid].tid + gwn.x)) == t4)
 						cout << "\nWash up after the successful handshake!\n";
@@ -324,55 +342,8 @@ string exor(string a, string b)
 				cout << "wrong1" << endl;
 		}
 		else
-			cout << "wrong0" << endl;
+			cout << "wrong" << endl;
 	}
 	else
-		cout << "\n FML \n";
-
-/*
-	if(flag)
-	{	
-		int ch;
-		string pass;
-		int who;
-		string whos;
-		string slash;
-
-		cout << endl << uid << endl << uidpass << endl;
-		cout << "\nWanna Change PWD?\n1 for Yes, 0  for No\n\n";
-		cin >> ch;
-
-		if(ch)
-		{
-			cout << "ID plox\n";
-			cin >> who;
-			whos = to_string(who);
-
-			cout << "Enter old PWD\n";
-			cin >> pass;
-
-			slash = generateHash(generateHash(whos) + generateHash(pass + r));
-			cout << u[who].a << endl;
-			if(u[who].a == slash)
-			{	
-				string pass1;
-				cout << "Enter new PWD\n";
-				cin >> pass1;
-
-				u[who].a = generateHash(generateHash(whos) + generateHash(pass + r));
-
-				u[who].b = exor(u[who].b, exor(generateHash(pass + r), generateHash(pass1 + r)));
-
-				input = generateHash(exor(generateHash(whos), generateHash(pass + r)));
-
-				input = exor(input, generateHash(exor(generateHash(whos), generateHash(pass1 + r))));
-
-				u[who].c = exor(u[who].c, input);
-
-				cout << "\nGood Job, PWD Updated\n";
-			}
-		}
-	}
-*/
-	return 0;
+		cout << "\n 'a' value didn't match \n";
  }
